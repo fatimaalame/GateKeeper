@@ -11,6 +11,15 @@ EditorBuildSettings:
   - enabled: 1
     path: Assets/Scenes/MainScene.unity
     guid: bcac955a4b9fb49bd997474426aa168e
+  - enabled: 1
+    path: Assets/Scenes/AdaptiveMazeScene.unity
+    guid: c2e6ece025e954186ad4086fad9545fb
+  - enabled: 1
+    path: Assets/Scenes/HowToPlay.unity
+    guid: fc306b57215ac48c8891e1918848f94e
+  - enabled: 1
+    path: Assets/Scenes/JTM.unity
+    guid: 056061930354d45709ebdd2dd1538aa4
   m_configObjects:
     com.unity.input.settings.actions: {fileID: -944628639613478452, guid: 289c1b55c9541489481df5cc06664110, type: 3}
   m_UseUCBPForAssetBundles: 0

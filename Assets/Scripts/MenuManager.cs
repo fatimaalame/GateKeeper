@@ -7,4 +7,24 @@ public class MenuManager : MonoBehaviour
     {
         SceneManager.LoadScene("MainScene");
     }
+
+    public void EnterTheMaze()
+    {
+        SceneManager.LoadScene("AdaptiveMazeScene");
+    }
+
+    public void OpenHowToPlay()
+    {
+        SceneManager.LoadScene("HowToPlay");
+    }
+
+    public void ReturnToMainMenu()
+    {
+        SceneManager.LoadScene("MainMenu");
+    }
+
+     public void OpenLoveLetter()
+    {
+        SceneManager.LoadScene("JTM");
+    }
 }

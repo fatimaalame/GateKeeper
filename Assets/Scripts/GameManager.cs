@@ -27,6 +27,9 @@ public class GameManager : MonoBehaviour
     // prefab de la porte
     public GameObject doorPrefab;
 
+    // prefab de l'ennemi
+    public GameObject enemyPrefab;
+
     [Header("Scene References")]
     // parent qui contient les objets du niveau
     public Transform levelParent;
@@ -38,6 +41,23 @@ public class GameManager : MonoBehaviour
     // taille d'une case du labyrinthe
     public float cellSize = 2f;
 
+    // vitesse de déplacement actuelle de l'ennemi
+    public float enemyMoveSpeed = 2f;
+
+    // vitesse de base de l'ennemi au niveau 2
+    public float baseEnemyMoveSpeed = 2f;
+
+    // augmentation de vitesse à chaque niveau supérieur
+    public float enemySpeedStep = 0.5f;
+
+    // distance minimale entre l'ennemi et le départ / la sortie
+    public float enemySafeDistanceMultiplier = 3f;
+
+    // longueur de la zone protégée autour du couloir critique (départ / sortie)
+    public float enemyCriticalCorridorLength = 6f;
+
+    // distance minimale entre deux ennemis au spawn
+    public float enemySpacingMultiplier = 2.5f;
 
     [Header("UI")]
     // script qui gère l'affichage logique à l'écran
@@ -64,6 +84,14 @@ public class GameManager : MonoBehaviour
     public GameObject tutorialCompletePanel;
     public int tutorialLevelCount = 4;
 
+    // panel de game over du vrai jeu
+    public GameObject gameOverPanel;
+    public TextMeshProUGUI gameOverScoreText;
+
+    // panel de victoire du vrai jeu
+    public GameObject victoryPanel;
+    public TextMeshProUGUI victoryText;
+
 
     [Header("Logic State")]
     
@@ -71,7 +99,7 @@ public class GameManager : MonoBehaviour
     public bool inputA = false;
 
     // nombre de vies du joueur
-    public int lives = 3;
+    public int lives = 5;
 
     // score du joueur
     public int score = 0;
@@ -82,8 +110,21 @@ public class GameManager : MonoBehaviour
     // référence vers le joueur créé dans la scène
     private GameObject currentPlayer;
 
+    // position de départ du joueur dans le niveau courant
+    private Vector3 currentPlayerStartPosition;
+
     // référence vers la porte créée dans la scène
     private GameObject currentDoor;
+
+    // liste des ennemis courants dans la scène
+    private List<GameObject> currentEnemies = new List<GameObject>();
+
+    // liste des cibles actuelles des ennemis
+    private List<Vector3> currentEnemyTargetPoints = new List<Vector3>();
+
+    // petit cooldown pour éviter de perdre plusieurs vies d'un coup
+    private float lastEnemyHitTime = -10f;
+    private float enemyHitCooldown = 1f;
 
     // maze actuellement utilisé
     private int[,] currentMaze;    
@@ -97,9 +138,20 @@ public class GameManager : MonoBehaviour
     // dit si on a dépassé le dernier niveau
     private bool gameFinished = false;
 
+    // évite de terminer un niveau deux fois à cause d'un double trigger
+    private bool isLoadingNextLevel = false;
+
+    // nombre de réussites consécutives au niveau 5
+    private int level5WinStreak = 0;
 
     [Header("Adaptive Difficulty")]
-    // niveau de difficulté actuel
+    // indique si on est dans le vrai mode adaptatif
+    public bool isAdaptiveMode = false;
+
+    // niveau adaptatif du vrai jeu (commence à 2 après le tuto)
+    public int adaptiveLevel = 2;
+
+    // niveau de difficulté actuel affiché dans le HUD
     public int difficultyLevel = 1;
 
     // nombre de réussites rapides d'affilée
@@ -111,17 +163,33 @@ public class GameManager : MonoBehaviour
     // temps mis pour finir le dernier niveau
     public float lastCompletionTime = 0f;
 
+    // nombre de réussites dans le niveau adaptatif courant
+    private int winsInCurrentAdaptiveLevel = 0;
+
+    // nombre de morts dans le niveau adaptatif courant
+    private int deathsInCurrentAdaptiveLevel = 0;
+
     private void Awake()
     {
         // singleton basique
         if (Instance == null) Instance = this;
         else Destroy(gameObject);
+
+        // on garde une vitesse de base propre pour les ennemis
+        baseEnemyMoveSpeed = enemyMoveSpeed;
     }
 
     private void Start()
     {
         // on crée les niveaux
         CreateLevels();
+
+        // si on est dans la scène du vrai jeu, on lance directement le mode adaptatif
+        if (SceneManager.GetActiveScene().name == "AdaptiveMazeScene")
+        {
+            StartAdaptiveGame();
+            return;
+        }
 
         if (instructionsPanel != null)
         {
@@ -138,12 +206,25 @@ public class GameManager : MonoBehaviour
             tutorialCompletePanel.SetActive(false);
         }
 
-        // on charge le premier niveau
+        if (gameOverPanel != null)
+        {
+            gameOverPanel.SetActive(false);
+        }
+
+        if (victoryPanel != null)
+        {
+            victoryPanel.SetActive(false);
+        }
+
+        Time.timeScale = 1f;
+
+        // on charge le premier niveau du tuto
         LoadLevel(0);
     }
     private void Update()
     {
         UpdateMiniMapPlayer();
+        UpdateEnemyMovement();
 
         if (Input.GetKeyDown(KeyCode.R))
         {
@@ -236,8 +317,15 @@ public class GameManager : MonoBehaviour
         // on garde en mémoire quel niveau est chargé
         currentLevelIndex = index;
 
+        // si un panel de game over était affiché, on le cache
+        if (gameOverPanel != null)
+        {
+            gameOverPanel.SetActive(false);
+        }
+
         // comme on charge un vrai niveau, le jeu n'est pas fini
         gameFinished = false;
+        isLoadingNextLevel = false;
 
         // on démarre le chrono du niveau
         levelStartTime = Time.time;
@@ -272,6 +360,18 @@ public class GameManager : MonoBehaviour
 
         // on vide l'ancienne référence de porte
         currentDoor = null;
+
+        // on détruit aussi les anciens ennemis s'ils existent
+        for (int i = 0; i < currentEnemies.Count; i++)
+        {
+            if (currentEnemies[i] != null)
+            {
+                Destroy(currentEnemies[i]);
+            }
+        }
+
+        currentEnemies.Clear();
+        currentEnemyTargetPoints.Clear();
 
         // on récupère le niveau pour garder sa logique (OR / AND / NOT)
         LogicLevelRuntime level = levels[index];
@@ -354,6 +454,9 @@ public class GameManager : MonoBehaviour
                         Quaternion.identity
                     );
 
+                    // on garde en mémoire la position de départ du joueur
+                    currentPlayerStartPosition = currentPlayer.transform.position;
+
                     // la caméra suit le joueur
                     CameraFollow cam = Camera.main.GetComponent<CameraFollow>();
                     if (cam != null)
@@ -403,7 +506,8 @@ public class GameManager : MonoBehaviour
             miniMapUI.BuildMiniMap(generatedMaze);
         }
 
-
+        // on fait apparaître un ennemi sur une case libre du niveau
+        SpawnEnemy();
     }
 
     // cette fonction inverse l'état de A
@@ -500,7 +604,14 @@ public class GameManager : MonoBehaviour
         // sécurité si aucune UI n'est reliée
         if (statusUI == null) return;
 
-        // +1 parce que l'index commence à 0 mais le joueur doit voir 1, 2, 3...
+        // pendant le vrai jeu, on affiche le niveau adaptatif
+        if (isAdaptiveMode)
+        {
+            statusUI.RefreshStatus(lives, score, adaptiveLevel, difficultyLevel);
+            return;
+        }
+
+        // pendant le tuto, on affiche le niveau normal de la liste
         statusUI.RefreshStatus(lives, score, currentLevelIndex + 1, difficultyLevel);
     }
 
@@ -579,6 +690,8 @@ public class GameManager : MonoBehaviour
         {
             tutorialCompletePanel.SetActive(true);
         }
+
+        isLoadingNextLevel = false;
     }
 
     // cette fonction met à jour le marqueur joueur sur la mini-map
@@ -644,48 +757,62 @@ public class GameManager : MonoBehaviour
         }
     }
     
-    // cette fonction donne le temps cible selon la difficulté
+    // cette fonction donne le temps cible selon la difficulté actuelle
     public float GetTargetTimeForCurrentDifficulty()
     {
-        if (difficultyLevel == 1)
+        // pendant le vrai jeu, on suit les niveaux adaptatifs 2 à 5
+        if (isAdaptiveMode)
         {
-            return 35f;
+            if (difficultyLevel == 2)
+            {
+                return 90f;
+            }
+
+            if (difficultyLevel == 3)
+            {
+                return 60f;
+            }
+
+            if (difficultyLevel == 4)
+            {
+                return 45f;
+            }
+
+            // niveau 5 ou plus
+            return 30f;
         }
 
-        if (difficultyLevel == 2)
-        {
-            return 50f;
-        }
-
-        if (difficultyLevel == 3)
-        {
-            return 70f;
-        }
-
-        // difficulté 4 ou plus
+        // pendant le tuto, on garde des temps larges pour laisser apprendre
         return 90f;
     }
     
         // cette fonction donne la taille du maze selon la difficulté
     public int GetMazeSizeForCurrentDifficulty()
     {
-        if (difficultyLevel == 1)
+        // pendant le vrai jeu, on suit les niveaux adaptatifs 2 à 5
+        if (isAdaptiveMode)
         {
-            return 9;
+            if (difficultyLevel == 2)
+            {
+                return 9;
+            }
+
+            if (difficultyLevel == 3)
+            {
+                return 11;
+            }
+
+            if (difficultyLevel == 4)
+            {
+                return 13;
+            }
+
+            // niveau 5 ou plus
+            return 15;
         }
 
-        if (difficultyLevel == 2)
-        {
-            return 11;
-        }
-
-        if (difficultyLevel == 3)
-        {
-            return 13;
-        }
-
-        // difficulté 4 ou plus
-        return 15;
+        // pendant le tuto, on garde un maze simple et constant
+        return 9;
     }
 
 
@@ -739,6 +866,21 @@ public class GameManager : MonoBehaviour
     // cette fonction charge le niveau suivant
     public void LoadNextLevel()
     {
+        // sécurité pour éviter un double passage au niveau suivant
+        if (isLoadingNextLevel)
+        {
+            return;
+        }
+
+        isLoadingNextLevel = true;
+
+        // si on est dans le vrai jeu, on ne suit plus la logique du tuto
+        if (isAdaptiveMode)
+        {
+            CompleteAdaptiveLevel();
+            return;
+        }
+
         // avant de changer de niveau, on ajuste la difficulté
         AdjustDifficulty();
 
@@ -765,10 +907,714 @@ public class GameManager : MonoBehaviour
         {
             gameFinished = true;
             Debug.Log("Tous les niveaux sont terminés hihi");
+            isLoadingNextLevel = false;
             return;
         }
 
         // sinon on charge le niveau suivant
         LoadLevel(currentLevelIndex);
+        isLoadingNextLevel = false;
+    }
+    // cette fonction démarre le vrai jeu après le tuto
+    public void StartAdaptiveGame()
+    {
+        // on active le vrai mode adaptatif
+        isAdaptiveMode = true;
+
+        // le vrai jeu commence au niveau 2
+        adaptiveLevel = 2;
+        difficultyLevel = adaptiveLevel;
+
+        // on remet les ressources du joueur à zéro
+        score = 0;
+        lives = 5;
+        level5WinStreak = 0;
+        winsInCurrentAdaptiveLevel = 0;
+        deathsInCurrentAdaptiveLevel = 0;
+
+        // on repart du premier layout de base pour le vrai jeu
+        currentLevelIndex = 0;
+        gameFinished = false;
+
+        // on cache les éléments du tuto
+        if (tutorialCompletePanel != null)
+        {
+            tutorialCompletePanel.SetActive(false);
+        }
+
+        if (tutorialMessagePanel != null)
+        {
+            tutorialMessagePanel.SetActive(false);
+        }
+
+        if (instructionsPanel != null)
+        {
+            instructionsPanel.SetActive(false);
+        }
+
+        // on cache aussi le panel de game over si besoin
+        if (gameOverPanel != null)
+        {
+            gameOverPanel.SetActive(false);
+        }
+
+        if (victoryPanel != null)
+        {
+            victoryPanel.SetActive(false);
+        }
+
+        Time.timeScale = 1f;
+
+        // on remet le HUD à jour
+        UpdateStatusUI();
+
+        // on lance le premier niveau du vrai jeu
+        GenerateAdaptiveLevel();
+    }
+
+    // cette fonction génère un niveau du vrai jeu en fonction de la difficulté
+    public void GenerateAdaptiveLevel()
+    {
+        // on cale la difficulté affichée sur le niveau adaptatif courant
+        difficultyLevel = adaptiveLevel;
+
+        // on met aussi à jour la vitesse des ennemis selon le niveau courant
+        UpdateEnemySpeedForAdaptiveLevel();
+
+        // pour l'instant on réutilise le système existant de chargement
+        // plus tard on pourra spécialiser encore plus les labyrinthes selon adaptiveLevel
+        currentLevelIndex = Mathf.Clamp(adaptiveLevel - 2, 0, levels.Count - 1);
+
+        Debug.Log("Vrai jeu lancé - niveau adaptatif : " + adaptiveLevel);
+
+        LoadLevel(currentLevelIndex);
+
+        // une fois le niveau chargé, on recache les panneaux de tuto
+        if (tutorialMessagePanel != null)
+        {
+            tutorialMessagePanel.SetActive(false);
+        }
+
+        if (instructionsPanel != null)
+        {
+            instructionsPanel.SetActive(false);
+        }
+
+        if (tutorialCompletePanel != null)
+        {
+            tutorialCompletePanel.SetActive(false);
+        }
+
+        isLoadingNextLevel = false;
+        UpdateStatusUI();
+    }
+
+    // cette fonction ajoute les points selon le niveau adaptatif atteint
+    public void AddScoreForCompletedAdaptiveLevel()
+    {
+        if (adaptiveLevel == 2)
+        {
+            score += 10;
+        }
+        else if (adaptiveLevel == 3)
+        {
+            score += 15;
+        }
+        else if (adaptiveLevel == 4)
+        {
+            score += 20;
+        }
+        else if (adaptiveLevel >= 5)
+        {
+            score += 30;
+        }
+
+        Debug.Log("Score adaptatif ajouté = " + score + " | niveau = " + adaptiveLevel);
+        UpdateStatusUI();
+    }
+
+    // cette fonction ajuste le niveau adaptatif selon la réussite du joueur
+    // ici la progression se fait avec 2 réussites pour monter et 2 morts pour descendre
+    public void AdjustAdaptiveLevel(bool success, bool withinTime, bool lostLife)
+    {
+        // cette fonction est gardée pour compatibilité, mais la vraie logique
+        // de montée / descente est maintenant gérée dans CompleteAdaptiveLevel et FailAdaptiveLevel
+        adaptiveLevel = Mathf.Clamp(adaptiveLevel, 2, 5);
+        difficultyLevel = adaptiveLevel;
+        UpdateEnemySpeedForAdaptiveLevel();
+    }
+
+    // cette fonction termine un niveau du vrai jeu et prépare le suivant
+    public void CompleteAdaptiveLevel()
+    {
+        // on mesure le temps mis pour finir
+        lastCompletionTime = Time.time - levelStartTime;
+
+        // on ajoute les points avant de passer au niveau suivant
+        AddScoreForCompletedAdaptiveLevel();
+        UpdateStatusUI();
+
+        // une réussite remet le compteur de morts du niveau courant à zéro
+        deathsInCurrentAdaptiveLevel = 0;
+
+        // si le joueur réussit un niveau 5, on augmente la série de victoires extrêmes
+        if (adaptiveLevel == 5)
+        {
+            level5WinStreak++;
+            Debug.Log("Victoire niveau 5 : " + level5WinStreak + "/3");
+
+            if (level5WinStreak >= 3)
+            {
+                ShowVictoryPanel();
+                return;
+            }
+
+            // au niveau 5, on reste au même niveau tant que la victoire finale n'est pas atteinte
+            GenerateAdaptiveLevel();
+            return;
+        }
+
+        // pour les niveaux 2 à 4, il faut réussir 2 fois avant de monter
+        winsInCurrentAdaptiveLevel++;
+        Debug.Log("Réussites dans le niveau " + adaptiveLevel + " : " + winsInCurrentAdaptiveLevel + "/2");
+
+        if (winsInCurrentAdaptiveLevel >= 2)
+        {
+            adaptiveLevel = Mathf.Clamp(adaptiveLevel + 1, 2, 5);
+            difficultyLevel = adaptiveLevel;
+            winsInCurrentAdaptiveLevel = 0;
+            deathsInCurrentAdaptiveLevel = 0;
+            UpdateEnemySpeedForAdaptiveLevel();
+            Debug.Log("Montée au niveau adaptatif : " + adaptiveLevel);
+        }
+
+        GenerateAdaptiveLevel();
+    }
+
+   // cette fonction sert pour le game over du vrai jeu
+    public void FailAdaptiveLevel()
+    {
+        level5WinStreak = 0;
+        winsInCurrentAdaptiveLevel = 0;
+        deathsInCurrentAdaptiveLevel = 0;
+
+        if (lives <= 0)
+        {
+            lives = 0;
+            UpdateStatusUI();
+            ShowGameOverPanel();
+            return;
+        }
+
+        GenerateAdaptiveLevel();
+    }
+    
+    // cette fonction ajuste la vitesse des ennemis selon le niveau adaptatif courant
+    public void UpdateEnemySpeedForAdaptiveLevel()
+    {
+        enemyMoveSpeed = baseEnemyMoveSpeed + ((adaptiveLevel - 2) * enemySpeedStep);
+    }
+
+
+    // cette fonction est appelée quand un ennemi touche le joueur
+public void OnPlayerHitByEnemy()
+    {
+        // petit cooldown pour éviter de perdre plusieurs vies instantanément
+        if (Time.time - lastEnemyHitTime < enemyHitCooldown)
+        {
+            return;
+        }
+
+        lastEnemyHitTime = Time.time;
+
+        lives -= 1;
+
+        if (lives < 0)
+        {
+            lives = 0;
+        }
+
+        // en mode adaptatif, chaque vie perdue compte comme une mort dans le niveau courant
+        if (isAdaptiveMode)
+        {
+            level5WinStreak = 0;
+            winsInCurrentAdaptiveLevel = 0;
+            deathsInCurrentAdaptiveLevel++;
+            Debug.Log("Morts dans le niveau " + adaptiveLevel + " : " + deathsInCurrentAdaptiveLevel + "/2");
+        }
+
+        // on met ensuite le HUD à jour
+        UpdateStatusUI();
+
+        // si le joueur n'a plus de vie, on utilise la logique de game over
+        if (lives <= 0)
+        {
+            if (isAdaptiveMode)
+            {
+                FailAdaptiveLevel();
+            }
+            else
+            {
+                ShowGameOverPanel();
+            }
+            return;
+        }
+
+        // si le joueur meurt 2 fois dans le même niveau, il redescend au niveau précédent
+        if (isAdaptiveMode && deathsInCurrentAdaptiveLevel >= 2)
+        {
+            adaptiveLevel = Mathf.Clamp(adaptiveLevel - 1, 2, 5);
+            difficultyLevel = adaptiveLevel;
+            deathsInCurrentAdaptiveLevel = 0;
+            winsInCurrentAdaptiveLevel = 0;
+            UpdateEnemySpeedForAdaptiveLevel();
+            Debug.Log("Descente au niveau adaptatif : " + adaptiveLevel);
+            GenerateAdaptiveLevel();
+            return;
+        }
+
+        // sinon on remet simplement le joueur au départ du niveau courant
+        ResetPlayerToStart();
+    }
+
+    // cette fonction replace le joueur à la case de départ du niveau courant
+    public void ResetPlayerToStart()
+    {
+        if (currentPlayer == null)
+        {
+            return;
+        }
+
+        // sécurité contre les positions invalides
+        if (!IsFiniteVector(currentPlayerStartPosition))
+        {
+            currentPlayerStartPosition = new Vector3(cellSize, 1f, cellSize);
+        }
+
+        CharacterController controller = currentPlayer.GetComponent<CharacterController>();
+
+        if (controller != null)
+        {
+            controller.enabled = false;
+        }
+
+        currentPlayer.transform.position = currentPlayerStartPosition;
+
+        if (controller != null)
+        {
+            controller.enabled = true;
+        }
+
+        Rigidbody rb = currentPlayer.GetComponent<Rigidbody>();
+        if (rb != null)
+        {
+            rb.linearVelocity = Vector3.zero;
+            rb.angularVelocity = Vector3.zero;
+        }
+    }
+
+    // cette fonction donne le nombre d'ennemis selon la difficulté actuelle
+    public int GetEnemyCountForCurrentDifficulty()
+    {
+        if (!isAdaptiveMode)
+        {
+            return 1;
+        }
+
+        if (adaptiveLevel == 2)
+        {
+            return 1;
+        }
+        else if (adaptiveLevel == 3)
+        {
+            return 2;
+        }
+        else if (adaptiveLevel == 4)
+        {
+            return 3;
+        }
+        else if (adaptiveLevel >= 5)
+        {
+            return 4;
+        }
+
+        return 1;
+    }
+
+    // cette fonction fait apparaître les ennemis du niveau selon la difficulté actuelle
+    public void SpawnEnemy()
+    {
+        if (enemyPrefab == null)
+        {
+            return;
+        }
+
+        if (currentMaze == null)
+        {
+            return;
+        }
+
+        int enemyCount = GetEnemyCountForCurrentDifficulty();
+        List<Vector3> usedSpawnPositions = new List<Vector3>();
+
+        for (int i = 0; i < enemyCount; i++)
+        {
+            Vector3 spawnPosition = GetRandomSafeEnemyPositionFarFromOthers(usedSpawnPositions);
+
+            // sécurité absolue : si le spawn est invalide, on annule seulement cet ennemi
+            if (!IsFiniteVector(spawnPosition))
+            {
+                Debug.LogWarning("Spawn ennemi annulé : position invalide");
+                continue;
+            }
+
+            GameObject enemy = Instantiate(enemyPrefab, spawnPosition, Quaternion.identity, levelParent);
+            currentEnemies.Add(enemy);
+            usedSpawnPositions.Add(spawnPosition);
+
+            Vector3 targetPoint = GetRandomSafeEnemyPositionDifferentFrom(spawnPosition);
+
+            // sécurité : si la cible est invalide ou trop proche, on force une cible plus loin
+            if (!IsFiniteVector(targetPoint) || Vector3.Distance(targetPoint, spawnPosition) < cellSize)
+            {
+                targetPoint = spawnPosition + new Vector3(cellSize * 2f, 0f, 0f);
+            }
+
+            currentEnemyTargetPoints.Add(targetPoint);
+
+            Debug.Log("Enemy " + i + " spawn OK at " + spawnPosition + " | target=" + targetPoint + " | total enemies=" + currentEnemies.Count);
+        }
+    }
+
+    // cette fonction cherche une position sûre en évitant les spawns déjà utilisés
+    public Vector3 GetRandomSafeEnemyPositionFarFromOthers(List<Vector3> usedPositions)
+    {
+        List<Vector3> possiblePositions = new List<Vector3>();
+        float minSpacing = cellSize * enemySpacingMultiplier;
+
+        int rows = currentMaze.GetLength(0);
+        int cols = currentMaze.GetLength(1);
+
+        for (int r = 0; r < rows; r++)
+        {
+            for (int c = 0; c < cols; c++)
+            {
+                int cell = currentMaze[r, c];
+
+                if (cell == 0)
+                {
+                    Vector3 worldPos = new Vector3(c * cellSize, 1f, r * cellSize);
+
+                    if (!IsSafeEnemyPosition(worldPos) || !IsFiniteVector(worldPos))
+                    {
+                        continue;
+                    }
+
+                    bool tooCloseToAnotherEnemy = false;
+                    for (int i = 0; i < usedPositions.Count; i++)
+                    {
+                        if (Vector3.Distance(worldPos, usedPositions[i]) < minSpacing)
+                        {
+                            tooCloseToAnotherEnemy = true;
+                            break;
+                        }
+                    }
+
+                    if (!tooCloseToAnotherEnemy)
+                    {
+                        possiblePositions.Add(worldPos);
+                    }
+                }
+            }
+        }
+
+        if (possiblePositions.Count == 0)
+        {
+            // fallback : on revient au système normal si on ne trouve pas assez d'espace
+            return GetRandomSafeEnemyPosition();
+        }
+
+        int randomIndex = Random.Range(0, possiblePositions.Count);
+        return possiblePositions[randomIndex];
+    }
+
+    // cette fonction choisit une cible de déplacement aléatoire différente de la position actuelle
+    // ici l'ennemi peut traverser les murs, donc la cible n'a pas besoin d'être sur une case libre
+    public Vector3 GetRandomSafeEnemyPositionDifferentFrom(Vector3 blockedPosition)
+    {
+        if (currentMaze == null)
+        {
+            return new Vector3(cellSize * 2f, 1f, cellSize * 2f);
+        }
+
+        int rows = currentMaze.GetLength(0);
+        int cols = currentMaze.GetLength(1);
+
+        float maxX = Mathf.Max(cellSize, (cols - 1) * cellSize);
+        float maxZ = Mathf.Max(cellSize, (rows - 1) * cellSize);
+
+        for (int i = 0; i < 60; i++)
+        {
+            Vector3 candidate = new Vector3(
+                Random.Range(0f, maxX),
+                1f,
+                Random.Range(0f, maxZ)
+            );
+
+            if (IsFiniteVector(candidate) && Vector3.Distance(candidate, blockedPosition) > cellSize * 2f)
+            {
+                return candidate;
+            }
+        }
+
+        Vector3 fallback = blockedPosition + new Vector3(cellSize * 2f, 0f, 0f);
+        if (!IsFiniteVector(fallback))
+        {
+            fallback = new Vector3(cellSize * 2f, 1f, cellSize * 2f);
+        }
+        return fallback;
+    }
+
+    // cette fonction choisit une position sûre aléatoire pour l'ennemi
+    public Vector3 GetRandomSafeEnemyPosition()
+    {
+        List<Vector3> possiblePositions = new List<Vector3>();
+
+        int rows = currentMaze.GetLength(0);
+        int cols = currentMaze.GetLength(1);
+
+        for (int r = 0; r < rows; r++)
+        {
+            for (int c = 0; c < cols; c++)
+            {
+                int cell = currentMaze[r, c];
+
+                if (cell == 0)
+                {
+                    Vector3 worldPos = new Vector3(c * cellSize, 1f, r * cellSize);
+
+                    if (IsSafeEnemyPosition(worldPos) && IsFiniteVector(worldPos))
+                    {
+                        possiblePositions.Add(worldPos);
+                    }
+                }
+            }
+        }
+
+        if (possiblePositions.Count == 0)
+        {
+            return new Vector3(cellSize * 2f, 1f, cellSize * 2f);
+        }
+
+        int randomIndex = Random.Range(0, possiblePositions.Count);
+        return possiblePositions[randomIndex];
+    }
+
+    // cette fonction évite de faire apparaître l'ennemi trop près du départ, des boutons ou de la sortie
+    public bool IsSafeEnemyPosition(Vector3 worldPos)
+    {
+        float safeDistance = cellSize * enemySafeDistanceMultiplier;
+        float corridorLength = cellSize * enemyCriticalCorridorLength;
+
+        int rows = currentMaze.GetLength(0);
+        int cols = currentMaze.GetLength(1);
+
+        for (int r = 0; r < rows; r++)
+        {
+            for (int c = 0; c < cols; c++)
+            {
+                int cell = currentMaze[r, c];
+
+                if (cell == 2 || cell == 3 || cell == 4 || cell == 5)
+                {
+                    Vector3 specialPos = new Vector3(c * cellSize, 1f, r * cellSize);
+
+                    if (Vector3.Distance(worldPos, specialPos) <= safeDistance)
+                    {
+                        return false;
+                    }
+
+                    if (IsOnProtectedCorridor(worldPos, specialPos, corridorLength))
+                    {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        return true;
+    }
+
+    // cette fonction évite que l'ennemi apparaisse sur le même couloir critique que le départ ou la sortie
+    public bool IsOnProtectedCorridor(Vector3 worldPos, Vector3 anchorPos, float protectedLength)
+    {
+        float halfCell = cellSize * 0.5f;
+
+        bool sameColumn = Mathf.Abs(worldPos.x - anchorPos.x) <= halfCell && Mathf.Abs(worldPos.z - anchorPos.z) <= protectedLength;
+        bool sameRow = Mathf.Abs(worldPos.z - anchorPos.z) <= halfCell && Mathf.Abs(worldPos.x - anchorPos.x) <= protectedLength;
+
+        return sameColumn || sameRow;
+    }
+
+    // cette fonction fait bouger tous les ennemis librement vers des cibles aléatoires
+    public void UpdateEnemyMovement()
+    {
+        if (currentEnemies == null || currentEnemies.Count == 0)
+        {
+            return;
+        }
+
+        for (int i = 0; i < currentEnemies.Count; i++)
+        {
+            GameObject enemy = currentEnemies[i];
+
+            if (enemy == null)
+            {
+                continue;
+            }
+
+            if (i >= currentEnemyTargetPoints.Count)
+            {
+                currentEnemyTargetPoints.Add(GetRandomSafeEnemyPositionDifferentFrom(enemy.transform.position));
+            }
+
+            Vector3 currentTarget = currentEnemyTargetPoints[i];
+
+            if (!IsFiniteVector(enemy.transform.position))
+            {
+                enemy.transform.position = GetRandomSafeEnemyPosition();
+            }
+
+            if (!IsFiniteVector(currentTarget) || currentTarget == Vector3.zero || Vector3.Distance(enemy.transform.position, currentTarget) < 0.1f)
+            {
+                currentTarget = GetRandomSafeEnemyPositionDifferentFrom(enemy.transform.position);
+                currentEnemyTargetPoints[i] = currentTarget;
+            }
+
+            enemy.transform.position = Vector3.MoveTowards(
+                enemy.transform.position,
+                currentTarget,
+                enemyMoveSpeed * Time.deltaTime
+            );
+
+            enemy.transform.position = new Vector3(
+                enemy.transform.position.x,
+                1f,
+                enemy.transform.position.z
+            );
+
+            if (Vector3.Distance(enemy.transform.position, currentTarget) < 0.1f)
+            {
+                currentEnemyTargetPoints[i] = GetRandomSafeEnemyPositionDifferentFrom(enemy.transform.position);
+            }
+        }
+    }
+
+    // cette fonction affiche le panel de game over avec le score final
+    public void ShowGameOverPanel()
+    {
+        gameFinished = true;
+        isLoadingNextLevel = false;
+
+        Debug.Log("ShowGameOverPanel appelée");
+
+        if (gameOverScoreText != null)
+        {
+            gameOverScoreText.text = "Score : " + score.ToString();
+            Debug.Log("Score text OK");
+        }
+        else
+        {
+            Debug.Log("gameOverScoreText est NULL");
+        }
+
+        if (gameOverPanel != null)
+        {
+            gameOverPanel.SetActive(true);
+            Debug.Log("gameOverPanel activé");
+        }
+        else
+        {
+            Debug.Log("gameOverPanel est NULL");
+        }
+
+        if (instructionsPanel != null)
+        {
+            instructionsPanel.SetActive(false);
+        }
+
+        if (tutorialMessagePanel != null)
+        {
+            tutorialMessagePanel.SetActive(false);
+        }
+
+        if (tutorialCompletePanel != null)
+        {
+            tutorialCompletePanel.SetActive(false);
+        }
+
+        Time.timeScale = 0f;
+        currentEnemies.Clear();
+        currentEnemyTargetPoints.Clear();
+        winsInCurrentAdaptiveLevel = 0;
+        deathsInCurrentAdaptiveLevel = 0;
+        level5WinStreak = 0;
+    }
+
+    // cette fonction affiche le panel de victoire avec le score final
+    public void ShowVictoryPanel()
+    {
+        gameFinished = true;
+        isLoadingNextLevel = false;
+
+        if (victoryText != null)
+        {
+            victoryText.text = "Victory !";
+        }
+
+        if (victoryPanel != null)
+        {
+            victoryPanel.SetActive(true);
+        }
+
+        if (instructionsPanel != null)
+        {
+            instructionsPanel.SetActive(false);
+        }
+
+        if (tutorialMessagePanel != null)
+        {
+            tutorialMessagePanel.SetActive(false);
+        }
+
+        if (tutorialCompletePanel != null)
+        {
+            tutorialCompletePanel.SetActive(false);
+        }
+
+        if (gameOverPanel != null)
+        {
+            gameOverPanel.SetActive(false);
+        }
+
+        Time.timeScale = 0f;
+        currentEnemies.Clear();
+        currentEnemyTargetPoints.Clear();
+        winsInCurrentAdaptiveLevel = 0;
+        deathsInCurrentAdaptiveLevel = 0;
+        level5WinStreak = 0;
+    }
+
+    // cette fonction est appelée par le bouton du panel de game over
+    public void ReturnToMainMenu()
+    {
+        Time.timeScale = 1f;
+        SceneManager.LoadScene("MainMenu");
+    }
+    // cette fonction vérifie qu'une position est finie (pas NaN / pas Infinity)
+    public bool IsFiniteVector(Vector3 value)
+    {
+        return !(float.IsNaN(value.x) || float.IsNaN(value.y) || float.IsNaN(value.z)
+              || float.IsInfinity(value.x) || float.IsInfinity(value.y) || float.IsInfinity(value.z));
     }
 }
