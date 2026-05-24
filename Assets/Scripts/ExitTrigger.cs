@@ -29,11 +29,23 @@ public class ExitTrigger : MonoBehaviour
         // si la porte est ouverte, on passe au niveau suivant
         if (result)
         {
+            // son de réussite du niveau avant de charger le suivant
+            if (AudioManager.Instance != null)
+            {
+                AudioManager.Instance.PlayLevelComplete();
+            }
+
             Debug.Log("Niveau réussi ✅");
             GameManager.Instance.LoadNextLevel();
         }
         else
         {
+            // son de porte bloquée si le joueur essaie de sortir trop tôt
+            if (AudioManager.Instance != null)
+            {
+                AudioManager.Instance.PlayDoorLocked();
+            }
+
             Debug.Log("La sortie est encore bloquée 🔒");
         }
     }

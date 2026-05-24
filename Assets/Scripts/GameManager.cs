@@ -141,6 +141,10 @@ public class GameManager : MonoBehaviour
     // évite de terminer un niveau deux fois à cause d'un double trigger
     private bool isLoadingNextLevel = false;
 
+    // garde le dernier état sonore de la porte pour éviter de spammer les sons
+    private bool hasDoorStateBeenInitialized = false;
+    private bool lastDoorOpenState = false;
+
     // nombre de réussites consécutives au niveau 5
     private int level5WinStreak = 0;
 
@@ -181,6 +185,12 @@ public class GameManager : MonoBehaviour
 
     private void Start()
     {
+        // Start the game music when this scene opens.
+        if (AudioManager.Instance != null)
+        {
+            AudioManager.Instance.PlayGameMusic();
+        }
+
         // on crée les niveaux
         CreateLevels();
 
@@ -360,6 +370,10 @@ public class GameManager : MonoBehaviour
 
         // on vide l'ancienne référence de porte
         currentDoor = null;
+
+        // on réinitialise le suivi sonore de la porte pour le nouveau niveau
+        hasDoorStateBeenInitialized = false;
+        lastDoorOpenState = false;
 
         // on détruit aussi les anciens ennemis s'ils existent
         for (int i = 0; i < currentEnemies.Count; i++)
@@ -718,6 +732,29 @@ public class GameManager : MonoBehaviour
 
         // on calcule si la porte doit être ouverte ou fermée
         bool result = EvaluateGate(gateType, inputA, inputB);
+
+        // on joue le son seulement quand l'état de la porte change
+        if (!hasDoorStateBeenInitialized)
+        {
+            hasDoorStateBeenInitialized = true;
+            lastDoorOpenState = result;
+        }
+        else if (result != lastDoorOpenState)
+        {
+            if (AudioManager.Instance != null)
+            {
+                if (result)
+                {
+                    AudioManager.Instance.PlayDoorOpen();
+                }
+                else
+                {
+                    AudioManager.Instance.PlayDoorLocked();
+                }
+            }
+
+            lastDoorOpenState = result;
+        }
 
         // on récupère le renderer de la porte
         Renderer doorRenderer = currentDoor.GetComponent<Renderer>();
@@ -1516,6 +1553,12 @@ public void OnPlayerHitByEnemy()
         gameFinished = true;
         isLoadingNextLevel = false;
 
+        // Play the game over sound when the final panel appears.
+        if (AudioManager.Instance != null)
+        {
+            AudioManager.Instance.PlayGameOver();
+        }
+
         Debug.Log("ShowGameOverPanel appelée");
 
         if (gameOverScoreText != null)
@@ -1567,6 +1610,12 @@ public void OnPlayerHitByEnemy()
         gameFinished = true;
         isLoadingNextLevel = false;
 
+        // Play a positive sound when the player wins the game.
+        if (AudioManager.Instance != null)
+        {
+            AudioManager.Instance.PlayLevelComplete();
+        }
+
         if (victoryText != null)
         {
             victoryText.text = "Victory !";
@@ -1609,6 +1658,13 @@ public void OnPlayerHitByEnemy()
     public void ReturnToMainMenu()
     {
         Time.timeScale = 1f;
+
+        // Play a click sound when returning to the main menu.
+        if (AudioManager.Instance != null)
+        {
+            AudioManager.Instance.PlayButtonClick();
+        }
+
         SceneManager.LoadScene("MainMenu");
     }
     // cette fonction vérifie qu'une position est finie (pas NaN / pas Infinity)

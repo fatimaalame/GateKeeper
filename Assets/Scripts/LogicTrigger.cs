@@ -25,12 +25,26 @@ public class LogicTrigger : MonoBehaviour
         if (triggerType == "A")
         {
             GameManager.Instance.ToggleA();
+
+            // son d'activation du bouton logique
+            if (AudioManager.Instance != null)
+            {
+                AudioManager.Instance.PlayActivate();
+            }
+
             Debug.Log("Le joueur a activé le bouton A");
         }
         // si c'est le bouton B, on change l'état de B
         else if (triggerType == "B")
         {
             GameManager.Instance.ToggleB();
+
+            // son d'activation du bouton logique
+            if (AudioManager.Instance != null)
+            {
+                AudioManager.Instance.PlayActivate();
+            }
+
             Debug.Log("Le joueur a activé le bouton B");
         }
         else
