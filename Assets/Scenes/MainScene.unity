@@ -323,6 +323,9 @@ MonoBehaviour:
   timerUI: {fileID: 0}
   levelInstructionText: {fileID: 621337483}
   instructionsPanel: {fileID: 0}
+  transitionMessagePanel: {fileID: 0}
+  transitionMessageText: {fileID: 0}
+  transitionMessageDuration: 4
   tutorialMessagePanel: {fileID: 621337481}
   tutorialMessageText: {fileID: 621337483}
   tutorialCompletePanel: {fileID: 2044496151}

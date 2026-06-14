@@ -1,5 +1,6 @@
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using System.Collections;
 using System.Collections.Generic;
 using TMPro;
 
@@ -78,6 +79,11 @@ public class GameManager : MonoBehaviour
     // panel du haut qui contient les instructions
     public GameObject instructionsPanel;
 
+    // panel de message temporaire affiché au centre de l'écran
+    public GameObject transitionMessagePanel;
+    public TextMeshProUGUI transitionMessageText;
+    public float transitionMessageDuration = 1.4f;
+
     public GameObject tutorialMessagePanel;
     public TextMeshProUGUI tutorialMessageText;
 
@@ -145,6 +151,9 @@ public class GameManager : MonoBehaviour
     private bool hasDoorStateBeenInitialized = false;
     private bool lastDoorOpenState = false;
 
+    // coroutine utilisée pour cacher les messages de transition
+    private Coroutine transitionMessageCoroutine;
+    
     // nombre de réussites consécutives au niveau 5
     private int level5WinStreak = 0;
 
@@ -707,7 +716,43 @@ public class GameManager : MonoBehaviour
 
         isLoadingNextLevel = false;
     }
+    // cette fonction affiche un message temporaire au joueur
+public void ShowTransitionMessage(string message)
+{
+    // si un vrai panel de transition existe, on l'utilise
+    if (transitionMessagePanel != null && transitionMessageText != null)
+    {
+        transitionMessagePanel.SetActive(true);
+        transitionMessageText.text = message;
 
+        if (transitionMessageCoroutine != null)
+        {
+            StopCoroutine(transitionMessageCoroutine);
+        }
+
+        transitionMessageCoroutine = StartCoroutine(HideTransitionMessageAfterDelay());
+        return;
+    }
+
+    // fallback : si aucun panel n'est relié, on utilise le texte du haut
+    if (levelInstructionText != null)
+    {
+        levelInstructionText.text = message;
+    }
+}
+
+// cette coroutine cache le message après un court délai
+private IEnumerator HideTransitionMessageAfterDelay()
+{
+    yield return new WaitForSeconds(transitionMessageDuration);
+
+    if (transitionMessagePanel != null)
+    {
+        transitionMessagePanel.SetActive(false);
+    }
+
+    transitionMessageCoroutine = null;
+}
     // cette fonction met à jour le marqueur joueur sur la mini-map
     public void UpdateMiniMapPlayer()
     {
@@ -921,6 +966,7 @@ public class GameManager : MonoBehaviour
         // avant de changer de niveau, on ajuste la difficulté
         AdjustDifficulty();
 
+        ShowTransitionMessage("Niveau réussi !");
         // le joueur gagne des points quand il termine un niveau
         score += 20;
 
@@ -1122,7 +1168,7 @@ public class GameManager : MonoBehaviour
             winsInCurrentAdaptiveLevel = 0;
             deathsInCurrentAdaptiveLevel = 0;
             UpdateEnemySpeedForAdaptiveLevel();
-            Debug.Log("Montée au niveau adaptatif : " + adaptiveLevel);
+            ShowTransitionMessage("Difficulté augmentée : niveau " + adaptiveLevel);
         }
 
         GenerateAdaptiveLevel();
@@ -1164,6 +1210,7 @@ public void OnPlayerHitByEnemy()
 
         lastEnemyHitTime = Time.time;
 
+        ShowTransitionMessage("Touché ! Tu perds une vie.");
         lives -= 1;
 
         if (lives < 0)
@@ -1206,6 +1253,7 @@ public void OnPlayerHitByEnemy()
             winsInCurrentAdaptiveLevel = 0;
             UpdateEnemySpeedForAdaptiveLevel();
             Debug.Log("Descente au niveau adaptatif : " + adaptiveLevel);
+            ShowTransitionMessage("Difficulté réduite : niveau " + adaptiveLevel);
             GenerateAdaptiveLevel();
             return;
         }
