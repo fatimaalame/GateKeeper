@@ -371,7 +371,7 @@ public class GameManager : MonoBehaviour
         inputB = false;
 
         // pendant un niveau normal, le bouton A n'est pas activé
-        // exception pour NOT : on le met activé au départ pour forcer le joueur à le désactiver
+        // Attention pr NOT : on l'a mis activé au départ pour forcer le joueur à le désactiver
         if (levels[index].gateType == GateType.NOT)
         {
             inputA = true;

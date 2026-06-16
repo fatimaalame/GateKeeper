@@ -2,41 +2,62 @@ using UnityEngine;
 
 public class CameraSwitcher : MonoBehaviour
 {
-    // caméra actuelle du jeu
+    // caméra principale du jeu
     public Camera currentCamera;
 
     // caméra POV trouvée automatiquement dans le joueur
     private Camera povCamera;
+
+    // joueur actuellement suivi
+    private GameObject currentPlayer;
 
     // true = caméra normale, false = caméra POV
     private bool isCurrentView = true;
 
     void Start()
     {
+        // si la caméra principale n'est pas reliée dans l'Inspector, on prend Camera.main
+        if (currentCamera == null)
+        {
+            currentCamera = Camera.main;
+        }
+
         // on force toujours la vue normale au lancement
         isCurrentView = true;
 
-        // on cherche une première fois la caméra POV
-        TryFindPovCamera();
+        // on cherche le joueur et la caméra POV
+        RefreshPlayerAndPovCamera();
+
+        // on s'assure que la caméra principale suit le bon joueur
+        UpdateMainCameraTarget();
 
         ApplyCameraState();
     }
 
     void Update()
     {
-        // si la caméra POV n'a pas encore été trouvée, on réessaie
-        if (povCamera == null)
+        // on vérifie régulièrement si le joueur a changé
+        // utile quand GameManager détruit / recrée Player(Clone)
+        GameObject foundPlayer = GameObject.FindGameObjectWithTag("Player");
+        if (foundPlayer != currentPlayer)
         {
-            TryFindPovCamera();
-            ApplyCameraState();
+            currentPlayer = foundPlayer;
+            povCamera = null;
+            RefreshPlayerAndPovCamera();
+            UpdateMainCameraTarget();
+            ResetToMainCamera();
         }
 
-        // si la caméra POV a disparu pendant qu'elle était active (ex: joueur détruit),
-        // on revient automatiquement à la caméra principale
+        // si la caméra POV manque, on réessaie de la retrouver
+        if (povCamera == null)
+        {
+            RefreshPlayerAndPovCamera();
+        }
+
+        // si la caméra POV a disparu pendant qu'elle était active, on revient en caméra normale
         if (povCamera == null && !isCurrentView)
         {
-            isCurrentView = true;
-            ApplyCameraState();
+            ResetToMainCamera();
         }
 
         if (Input.GetKeyDown(KeyCode.C))
@@ -45,18 +66,19 @@ public class CameraSwitcher : MonoBehaviour
         }
     }
 
-    // cette fonction cherche automatiquement la caméra POV dans le joueur
-    void TryFindPovCamera()
+    // cette fonction retrouve le joueur et sa caméra POV
+    private void RefreshPlayerAndPovCamera()
     {
-        GameObject player = GameObject.FindGameObjectWithTag("Player");
+        currentPlayer = GameObject.FindGameObjectWithTag("Player");
 
-        if (player == null)
+        if (currentPlayer == null)
         {
+            povCamera = null;
             return;
         }
 
-        // on cherche dans tous les enfants, même plus profondément
-        Camera[] cameras = player.GetComponentsInChildren<Camera>(true);
+        // on cherche dans tous les enfants, même si la caméra est désactivée
+        Camera[] cameras = currentPlayer.GetComponentsInChildren<Camera>(true);
 
         for (int i = 0; i < cameras.Length; i++)
         {
@@ -66,13 +88,34 @@ public class CameraSwitcher : MonoBehaviour
                 return;
             }
         }
+
+        povCamera = null;
+    }
+
+    // cette fonction remet la caméra principale sur le joueur actuel
+    private void UpdateMainCameraTarget()
+    {
+        if (currentCamera == null)
+        {
+            currentCamera = Camera.main;
+        }
+
+        if (currentCamera == null || currentPlayer == null)
+        {
+            return;
+        }
+
+        CameraFollow follow = currentCamera.GetComponent<CameraFollow>();
+        if (follow != null)
+        {
+            follow.target = currentPlayer.transform;
+        }
     }
 
     // cette fonction applique l'état actuel des deux caméras
-    void ApplyCameraState()
+    private void ApplyCameraState()
     {
-        // sécurité : si la caméra POV a été détruite avec le joueur,
-        // Unity peut garder une ancienne référence cassée
+        // si la caméra POV n'existe pas, on force la caméra normale
         if (povCamera == null)
         {
             isCurrentView = true;
@@ -81,6 +124,7 @@ public class CameraSwitcher : MonoBehaviour
         if (currentCamera != null)
         {
             currentCamera.gameObject.SetActive(isCurrentView);
+
             AudioListener currentListener = currentCamera.GetComponent<AudioListener>();
             if (currentListener != null)
             {
@@ -91,6 +135,7 @@ public class CameraSwitcher : MonoBehaviour
         if (povCamera != null)
         {
             povCamera.gameObject.SetActive(!isCurrentView);
+
             AudioListener povListener = povCamera.GetComponent<AudioListener>();
             if (povListener != null)
             {
@@ -99,29 +144,32 @@ public class CameraSwitcher : MonoBehaviour
         }
     }
 
+    // cette fonction remet le jeu en caméra normale
     public void ResetToMainCamera()
     {
-        // si la caméra POV n'existe plus ou est en train d'être détruite,
-        // on oublie proprement cette référence
-        if (povCamera == null)
+        isCurrentView = true;
+
+        RefreshPlayerAndPovCamera();
+        UpdateMainCameraTarget();
+
+        // on coupe toujours la POV quand on revient en vue normale
+        if (povCamera != null)
         {
-            povCamera = null;
+            povCamera.gameObject.SetActive(false);
         }
 
-        isCurrentView = true;
         ApplyCameraState();
     }
 
+    // cette fonction alterne entre caméra normale et caméra POV
     public void SwitchCamera()
     {
-        // sécurité : on réessaie au moment du switch si la caméra POV manque encore
-        if (povCamera == null)
-        {
-            TryFindPovCamera();
-        }
+        RefreshPlayerAndPovCamera();
+        UpdateMainCameraTarget();
 
         if (currentCamera == null || povCamera == null)
         {
+            Debug.LogWarning("Switch caméra impossible : caméra principale ou POV manquante");
             return;
         }
 

@@ -14,6 +14,9 @@ public class PlayerMovement : MonoBehaviour
     // caméra POV à faire glisser dans l'Inspector si besoin
     public Transform povCameraTransform;
 
+    // rotation de départ de la caméra POV, pour pouvoir la remettre proprement
+    private Quaternion initialPovCameraLocalRotation;
+
     // composant Unity qui gère le déplacement du personnage
     private CharacterController controller;
 
@@ -34,6 +37,12 @@ public class PlayerMovement : MonoBehaviour
             {
                 povCameraTransform = found;
             }
+        }
+
+        // on garde la rotation de départ de la caméra POV
+        if (povCameraTransform != null)
+        {
+            initialPovCameraLocalRotation = povCameraTransform.localRotation;
         }
     }
 
@@ -68,8 +77,9 @@ public class PlayerMovement : MonoBehaviour
 
         controller.Move(move * moveSpeed * Time.deltaTime);
 
-        // rotation de la caméra POV avec A / D
-        if (povCameraTransform != null)
+        // rotation de la caméra POV avec A / D / Q
+        // important : on ne tourne la caméra que si elle est vraiment active
+        if (povCameraTransform != null && povCameraTransform.gameObject.activeInHierarchy)
         {
             float cameraTurn = 0f;
 
@@ -102,6 +112,8 @@ public class PlayerMovement : MonoBehaviour
     {
         if (other.CompareTag("Enemy"))
         {
+            ResetCameraBeforeLevelChangeOrHit();
+
             if (GameManager.Instance != null)
             {
                 GameManager.Instance.OnPlayerHitByEnemy();
@@ -113,10 +125,33 @@ public class PlayerMovement : MonoBehaviour
     {
         if (collision.collider.CompareTag("Enemy"))
         {
+            ResetCameraBeforeLevelChangeOrHit();
+
             if (GameManager.Instance != null)
             {
                 GameManager.Instance.OnPlayerHitByEnemy();
             }
+        }
+    }
+
+    // remet la caméra POV dans son état de départ
+    public void ResetPovCameraRotation()
+    {
+        if (povCameraTransform != null)
+        {
+            povCameraTransform.localRotation = initialPovCameraLocalRotation;
+        }
+    }
+
+    // remet la caméra normale avant une perte de vie ou un changement important
+    private void ResetCameraBeforeLevelChangeOrHit()
+    {
+        ResetPovCameraRotation();
+
+        CameraSwitcher cameraSwitcher = FindFirstObjectByType<CameraSwitcher>();
+        if (cameraSwitcher != null)
+        {
+            cameraSwitcher.ResetToMainCamera();
         }
     }
 }
